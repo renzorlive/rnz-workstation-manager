@@ -1,0 +1,38 @@
+[package]
+name = "rnz-workstation-manager"
+version = "0.1.0"
+description = "Local-first project inventory scanner"
+authors = ["RNZ"]
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "rnz_workstation_manager_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-dialog = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+walkdir = "2"
+rusqlite = { version = "0.32", features = ["bundled"] }
+dirs = "5"
+zip = "2"
+
+# Pin transitive crates to aligned versions. Tauri's `brotli` is built against
+# alloc-no-stdlib 2.x, but Cargo otherwise pulls alloc-stdlib 0.2.3 (which moved
+# to alloc-no-stdlib 3.x), causing a trait-mismatch build error. Forcing both to
+# the 2.x line keeps a single, compatible Allocator implementation.
+alloc-no-stdlib = "=2.0.4"
+alloc-stdlib = "=0.2.2"
+
+[profile.release]
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
