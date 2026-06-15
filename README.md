@@ -2,117 +2,123 @@
 
 # 🗂️ RNZ Workstation Manager
 
-### Find, understand, clean, back up, and recover your entire dev workstation — locally.
+### Your `C:\` drive is a crime scene. This is the detective.
 
-A **local-first** desktop app that scans your disks, builds a live inventory of every
-software project, tells you what's junk and what's recoverable, and packages
-everything you need to rebuild your machine after a disk failure.
+You have **300 projects** scattered across three drives, `node_modules` folders
+older than your career, and a `Downloads\public_html\public_html\` you're too
+scared to open. You don't know what's there, what's junk, or whether you could
+rebuild your machine if the SSD died tonight.
 
+**Same.** That's why this exists.
+
+[![Built for Windows](https://img.shields.io/badge/Built_for-Windows_devs-0078D6?logo=windows&logoColor=white)](#)
 [![Tauri](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)](https://v2.tauri.app)
-[![Rust](https://img.shields.io/badge/Rust-stable-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org)
-[![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)](https://react.dev)
-[![SQLite](https://img.shields.io/badge/SQLite-local-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org)
+[![Rust](https://img.shields.io/badge/Rust-blazingly_honest-DEA584?logo=rust&logoColor=white)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-22c55e.svg)](LICENSE)
+[![Cloud](https://img.shields.io/badge/Cloud-absolutely_not-f8716a)](#)
 
-**No cloud · No telemetry · No account · Your data never leaves your machine.**
+**No cloud. No login. No telemetry. No "upgrade to Pro." Your data dies on your machine, where it belongs.**
 
 </div>
 
 ---
 
-## Why
+## 🪟 Yes, it's a Windows thing
 
-If you've ever had 100+ projects scattered across drives and asked yourself:
+Built by a Windows dev, for Windows devs. It speaks `%APPDATA%`, `%LOCALAPPDATA%`,
+PowerShell profiles, that cursed versioned `Packages\Microsoft.WindowsTerminal_*`
+folder, and the seventeen places your tools hide their configs. macOS and Linux
+users: it'll mostly work and we won't stop you, but the love letters are addressed
+to `C:\Users\you`.
 
-- *"What do I actually have on disk, and how much space is it eating?"*
-- *"What can I safely delete to free up 50 GB right now?"*
-- *"If this SSD died tomorrow, could I rebuild my workstation in an hour?"*
+## 🤨 The questions this answers
 
-…this is built to answer exactly those questions — for developers, without the noise.
+> *"How much of my 500 GB is actually code and how much is `node_modules`?"*
 
-## ✨ Features
+Spoiler: it's mostly `node_modules`. It's always `node_modules`.
 
-### 🔍 Discover & inventory
-- **Smart project detection** by markers (`.git`, `package.json`, `Cargo.toml`, `composer.json`, `go.mod`, `pyproject.toml`, `*.sln`, …) with stack inference (Next.js, React, Rust, Go, PHP, .NET, Python).
-- **Dependency-aware** — never mistakes vendored deps for projects (`node_modules`, `vendor`, `vendor_prefixed`, `.pnpm`, …), recognizes **WordPress** installs as one project, and groups **monorepos** (frontend + backend + bot) into a single entry.
-- **Confidence score** per project + a "likely dependency" flag, and one-click **Ignore** to hide false positives (persists across rescans).
-- **Find projects** mode — scan your whole computer when you don't know where things live, grouped by location.
-- **Global search**, **sort** (size / junk / health / activity) and **quick filters** (active, inactive, no-git, high-junk, low-health).
+> *"Which of these 280 folders are real projects and which are random extracted zips?"*
 
-### 🧮 Understand
-- **Health score** (0–100) with a fully explainable breakdown (git, README, junk ratio, activity).
-- **Detailed junk breakdown** per project and workspace — `node_modules`, `.next`, `dist`, `build`, `coverage`, `target`, archives, logs — each measured separately.
-- **Historical scans & trends** — every scan is snapshotted; cards show deltas vs. the last scan; a History tab tracks projects / health / junk over time.
-- **Top offenders** — biggest recoverable space and worst-health projects at a glance.
+It knows. It even gives each one a **confidence score**, like a bouncer.
 
-### 🧹 Clean (analysis-first, no accidental deletes)
-- **Cleanup Analyzer** classifies every junk category as **Safe / Review / Caution** with a cleanup-confidence %, a dry-run recovery plan, and an explicit "never touched" guarantee for source/git/databases.
+> *"If Windows Update nukes my drive tonight, am I cooked?"*
 
-### 💾 Back up & recover
-- **Dev-aware backup** — copies project source **including full `.git` history** but **skips** regenerable dependency/build dirs. Back up the GBs that matter, not the bloat. Non-destructive.
-- **Reinstall Readiness** — a categorized checklist of ~40 dev artifacts (SSH/GPG keys, git config, **AI tools**: Claude, Codex, Gemini, opencode, Aider, Continue, Cursor, Windsurf, Manus, Trae; editors; shells & terminals; cloud CLIs; package managers) with a readiness score over the essentials.
-- **Recovery Pack** — one click bundles every detected config (+ a project inventory + a Docker manifest) into a single dated zip.
-- **Docker volume backup** — exports named volumes (your databases/data) to tarballs, plus a manifest of containers/images/volumes/networks.
+There's a **Reinstall Readiness** score for that. Find out how cooked you are, then un-cook yourself.
 
-## 🖼️ Screenshots
+## ✨ What it actually does
 
-> _Add screenshots/GIFs here — `docs/screenshot-overview.png`, etc._
+### 🔍 Finds your stuff
+Smart project detection (`.git`, `package.json`, `Cargo.toml`, `go.mod`, `*.sln`, …)
+with stack sniffing. It's not dumb about it either:
+- **Ignores vendored deps** — your WordPress plugin's `vendor_prefixed/polyfill-php80` is **not** a project, and it knows that now.
+- **WordPress = one project**, not 47 plugins pretending to be your work.
+- **Monorepos** (`frontend` + `backend` + `bot`) collapse into one entry instead of three.
+- **"Find projects" mode** scans your whole machine for when you genuinely have no idea where anything is. (We've all been there. It's fine.)
 
-## 🚀 Getting started
+### 🧮 Understands your stuff
+- A **health score** (0–100) that actually explains itself — no git? no readme? 4 GB of junk? It'll tell you why your project is sad.
+- **Detailed junk breakdown** — `node_modules`, `.next`, `dist`, `target`, `coverage`, logs, archives — measured separately so you know exactly where the bytes went.
+- **History & deltas** — watch your junk grow over time like a Tamagotchi you're neglecting.
+- **Sort by junk, size, health.** Find the worst offenders in one click.
 
-### Prerequisites
-- **Node.js** 18+
-- **Rust** (stable) — install via [rustup](https://rustup.rs)
-- Tauri OS prerequisites — see the [Tauri guide](https://v2.tauri.app/start/prerequisites/) (Windows: MS C++ Build Tools + WebView2, which ships with Win11)
+### 🧹 Cleans your stuff (carefully)
+The **Cleanup Analyzer** sorts every junk category into **Safe / Review / Caution**
+with a confidence %, and shows how many GB you'd reclaim — **without deleting anything.**
+No "oops" button. Source code, Git history and databases are never, ever touched.
 
-### Run in dev
-```bash
+### 💾 Backs up the stuff that matters
+- **Dev-aware backup** — copies your source **and full Git history**, but skips the regenerable `node_modules`/`dist`/`target` bloat. Back up the 240 GB that matters, not the 420 GB of garbage.
+- **Reinstall Readiness + Recovery Pack** — one click zips up SSH keys, git config, and configs for **VS Code, Cursor, Windsurf, Trae, Zed, Neovim**, the AI gang (**Claude, Codex, Gemini, opencode, Aider, Continue, Manus**), PowerShell, Windows Terminal, Docker, AWS/gcloud/Azure, and more. Reinstall Windows, unzip, you're back in an hour.
+- **Docker volume backup** — exports your named volumes (the actual database data) to tarballs, because `docker compose up` won't bring back the data you lost.
+
+### ⌨️ Feels like a real app
+Sidebar nav, a **`Cmd/Ctrl+K` command palette** that searches every project instantly,
+and a native side panel. Linear/Raycast energy, zero admin-panel energy.
+
+## 🚀 Run it (Windows)
+
+You'll need: **Node 18+**, **Rust** ([rustup](https://rustup.rs)), and
+[MS C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
+(WebView2 already ships with Windows 11).
+
+```powershell
 npm install
 npm run tauri dev
 ```
 
-### Build a release binary
-```bash
+Build the installer:
+```powershell
 npm run tauri build
-```
-Installers land in `src-tauri/target/release/bundle/`.
-
-## 🏗️ How it works
-
-```
-React + TypeScript (UI)  ──invoke──>  Rust commands (Tauri)
-                                          │
-              scanner · detector · junk · health · backup · recovery · docker
-                                          │
-                                    SQLite (local)
+# → src-tauri\target\release\bundle\
 ```
 
-- **Rust** does the heavy lifting: parallel-friendly filesystem walking, project/stack detection, junk classification, health scoring, backup copying, and zip packaging.
-- **SQLite** (bundled, local) stores workspaces, projects, per-category junk, and scan snapshots in the OS app-data dir.
-- **React + Vite** renders a fast, native-feeling desktop UI inside a Tauri WebView.
+First Rust build takes a minute. Go make coffee. ☕
 
-See [`src-tauri/src/`](src-tauri/src) for the backend modules and [`src/`](src) for the UI.
+## 🔒 The privacy bit (it's short)
 
-## 🔒 Privacy
+Nothing leaves your machine. No accounts, no analytics, no phoning home.
+The only things that ever move are the backup folder and recovery zip **you**
+create — and yes, that zip contains your **SSH keys**, so guard it like one.
 
-Everything runs and stays on your machine. There is no network calls, no analytics,
-and no account. The only data that ever leaves is what **you** explicitly export
-(a backup folder or a recovery zip you create). The Recovery Pack can include
-**secrets** (SSH keys, cloud credentials) by design — treat that zip like a credential.
+## 🏗️ Under the hood
 
-## 🗺️ Roadmap
+**Rust** (Tauri) does the heavy lifting — filesystem scanning, detection, junk
+math, backups, zipping. **React + TypeScript** for a UI that doesn't feel like a
+web page in a trench coat. **SQLite**, local, no server. That's it.
 
-- [ ] One-click cleanup (after the analyzer model is trusted)
-- [ ] Scheduled / automatic scans + filesystem watching
-- [ ] Export inventory (CSV / Markdown)
-- [ ] Trend charts once enough history accrues
-- [ ] Backup profiles with size estimation
+## 🗺️ Roadmap (aka "later")
+
+- [ ] One-click cleanup (once we trust the model not to nuke anything)
+- [ ] Scheduled scans
+- [ ] Trend charts (once there's enough history to be interesting)
+- [ ] Export inventory to CSV / Markdown
 
 ## 🤝 Contributing
 
-Contributions welcome! See [CONTRIBUTING.md](CONTRIBUTING.md). Open an issue to
-discuss bigger changes first.
+PRs welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). Found a folder it
+mis-detected? Open an issue with the folder layout; the detector lives to be
+tuned.
 
 ## 📄 License
 
-[MIT](LICENSE) © RNZ
+[MIT](LICENSE) © RNZ — do whatever, just don't blame us if you `rm -rf` the wrong thing.
