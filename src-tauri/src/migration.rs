@@ -28,6 +28,11 @@ const BROWSERS: &[(&str, &[&str])] = &[
     ("Edge", &["Microsoft", "Edge", "User Data"]),
 ];
 
+/// Structured-data file extensions worth migrating (scrapes, exports, datasets).
+const DATA_EXTS: &[&str] = &[
+    "csv", "tsv", "json", "jsonl", "ndjson", "parquet", "sqlite", "sqlite3", "db", "xlsx", "sql",
+];
+
 pub fn discover(now: i64) -> MigrationDiscovery {
     let mut items: Vec<MigrationItem> = Vec::new();
 
@@ -35,6 +40,7 @@ pub fn discover(now: i64) -> MigrationDiscovery {
     vmware_vms(&mut items);
     native_databases(&mut items);
     wsl_distros(&mut items);
+    flat_file_assets(&mut items);
     passkeys_notice(&mut items);
 
     items.sort_by_key(|i| (i.status.rank(), std::cmp::Reverse(i.size_bytes)));
@@ -210,6 +216,40 @@ fn wsl_distros(out: &mut Vec<MigrationItem>) {
     }
 }
 
+/// Large structured-data folders NOT under git — the gap that hides scrapes,
+/// datasets and exports outside any tracked project (e.g. an 11k-row cars.csv
+/// sitting in Documents). Read-only: counts data files and sums their size.
+fn flat_file_assets(out: &mut Vec<MigrationItem>) {
+    const MIN_BYTES: u64 = 20 * 1024 * 1024; // 20 MB — ignore small config/data
+    let roots = [dirs::document_dir(), dirs::download_dir(), dirs::desktop_dir()];
+    for root in roots.into_iter().flatten() {
+        let entries = match std::fs::read_dir(&root) {
+            Ok(e) => e,
+            Err(_) => continue,
+        };
+        for entry in entries.flatten() {
+            let dir = entry.path();
+            if !dir.is_dir() || dir.join(".git").exists() {
+                continue; // non-dir, or a tracked repo (git-bundle backup covers it)
+            }
+            let (bytes, files) = data_dir_size(&dir);
+            if bytes < MIN_BYTES {
+                continue;
+            }
+            let name = entry.file_name().to_string_lossy().to_string();
+            out.push(item(
+                "data-asset",
+                &name,
+                format!("{files} data file(s), not in git — unversioned dataset/scrape/export"),
+                dir.to_string_lossy().to_string(),
+                bytes,
+                MigrationStatus::NotBackedUp,
+                "Copy this folder to external storage (or git-init + push) — it may exist nowhere else.",
+            ));
+        }
+    }
+}
+
 /// Passkeys can't be enumerated or copied (device-bound); always advise.
 fn passkeys_notice(out: &mut Vec<MigrationItem>) {
     out.push(item(
@@ -282,9 +322,55 @@ fn capped_dir_size(dir: &Path) -> u64 {
     bytes
 }
 
+/// True if `path` has a structured-data extension we care to migrate.
+fn is_data_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| DATA_EXTS.contains(&e.to_ascii_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+/// (bytes, count) of DATA files under `dir`, pruning regenerable/noise dirs,
+/// capped at 50k files.
+// ponytail: naive full-walk under each candidate; the 50k cap bounds it. If a
+// huge Downloads subtree ever makes this slow, add a max-depth or size budget.
+fn data_dir_size(dir: &Path) -> (u64, u64) {
+    const PRUNE: &[&str] = &[
+        "node_modules", ".venv", "venv", "__pycache__", ".cache", ".git", ".next", "dist", "build",
+    ];
+    let mut bytes = 0u64;
+    let mut files = 0u64;
+    let walk = WalkDir::new(dir).follow_links(false).into_iter().filter_entry(|e| {
+        !(e.file_type().is_dir()
+            && e.file_name().to_str().map(|n| PRUNE.contains(&n)).unwrap_or(false))
+    });
+    for entry in walk.flatten() {
+        if entry.file_type().is_file() && is_data_file(entry.path()) {
+            if let Ok(m) = entry.metadata() {
+                bytes += m.len();
+            }
+            files += 1;
+            if files >= 50_000 {
+                break;
+            }
+        }
+    }
+    (bytes, files)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn classifies_data_files() {
+        assert!(is_data_file(Path::new(r"C:\x\output\cars.csv")));
+        assert!(is_data_file(Path::new("data.JSONL"))); // case-insensitive
+        assert!(is_data_file(Path::new("db.sqlite3")));
+        assert!(!is_data_file(Path::new("pipeline.py")));
+        assert!(!is_data_file(Path::new("README.md")));
+        assert!(!is_data_file(Path::new("noext")));
+    }
 
     #[test]
     fn extracts_vmx_path() {
