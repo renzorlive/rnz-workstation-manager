@@ -1,14 +1,18 @@
 //! RNZ Workstation Manager — Tauri backend entry point.
 
+mod audit;
 mod backup;
 mod db;
 mod detector;
 mod docker;
+mod git;
 mod health;
 mod junk;
 mod model;
 mod recovery;
 mod scanner;
+mod secrets;
+mod software;
 
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -16,8 +20,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
 use model::{
-    BackupResult, DockerBackupResult, DockerStatus, Project, Readiness, Snapshot, Workspace,
-    WorkspaceStats,
+    AuditReport, BackupResult, DockerBackupResult, DockerStatus, Project, Readiness, Snapshot,
+    Workspace, WorkspaceStats,
 };
 
 fn now_secs() -> i64 {
@@ -322,6 +326,38 @@ async fn backup_docker_volumes(dest: String) -> Result<DockerBackupResult, Strin
 }
 
 // ---------------------------------------------------------------------------
+// Pre-reinstall audit (read-only)
+// ---------------------------------------------------------------------------
+
+/// Run the read-only pre-reinstall audit over every scanned project plus the
+/// machine software inventory. Does not modify anything on disk.
+#[tauri::command]
+async fn run_audit(app: tauri::AppHandle) -> Result<AuditReport, String> {
+    let conn = open_db(&app)?;
+    let projects = db::all_projects(&conn).map_err(|e| e.to_string())?;
+    drop(conn);
+    let now = now_secs();
+    tauri::async_runtime::spawn_blocking(move || audit::run(projects, now))
+        .await
+        .map_err(|e| format!("audit failed: {e}"))
+}
+
+/// Write the audit report to `dir` as both `audit.json` and `audit-report.md`.
+/// Returns the directory written to.
+#[tauri::command]
+fn export_audit(dir: String, report: AuditReport) -> Result<String, String> {
+    let dir_path = PathBuf::from(&dir);
+    if !dir_path.is_dir() {
+        return Err(format!("not a directory: {dir}"));
+    }
+    let json = serde_json::to_string_pretty(&report).map_err(|e| e.to_string())?;
+    std::fs::write(dir_path.join("audit.json"), json).map_err(|e| e.to_string())?;
+    std::fs::write(dir_path.join("audit-report.md"), audit::to_markdown(&report))
+        .map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+// ---------------------------------------------------------------------------
 // External openers
 // ---------------------------------------------------------------------------
 
@@ -377,6 +413,8 @@ pub fn run() {
             backup_project,
             docker_status,
             backup_docker_volumes,
+            run_audit,
+            export_audit,
             open_folder,
             open_vscode
         ])

@@ -104,3 +104,60 @@ export interface DockerBackupResult {
   dest: string;
   errors: string[];
 }
+
+export interface GitInfo {
+  is_repo: boolean;
+  branch: string;
+  detached: boolean;
+  head: string;
+  last_commit: number;
+  dirty: boolean;
+  modified: number;
+  untracked: number;
+  ahead: number;
+  behind: number;
+  has_upstream: boolean;
+  remotes: string[];
+  has_remote: boolean;
+}
+
+export interface EnvFile {
+  path: string;
+  name: string;
+  var_count: number;
+  tracked_by_git: boolean;
+}
+
+export interface ProjectAudit {
+  name: string;
+  path: string;
+  stack: string[];
+  size_bytes: number;
+  git: GitInfo;
+  env_files: EnvFile[];
+  severity: "critical" | "warning" | "ok";
+  issues: string[];
+}
+
+export interface SoftwareItem {
+  name: string;
+  version: string;
+  found: boolean;
+}
+
+export interface AuditReport {
+  generated_at: number;
+  projects: ProjectAudit[];
+  software: SoftwareItem[];
+  total_projects: number;
+  git_repos: number;
+  not_git: number;
+  dirty: number;
+  no_remote: number;
+  unpushed: number;
+  env_files_total: number;
+  tracked_secrets: number;
+  critical: string[];
+  warnings: string[];
+  safe_to_reinstall: boolean;
+}

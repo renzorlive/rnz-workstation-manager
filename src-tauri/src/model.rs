@@ -126,3 +126,82 @@ pub struct DockerBackupResult {
     pub dest: String,
     pub errors: Vec<String>,
 }
+
+// ---------------------------------------------------------------------------
+// Pre-reinstall audit (read-only)
+// ---------------------------------------------------------------------------
+
+/// Read-only Git state for one repository. All fields are safe to serialize:
+/// remote URLs are credential-redacted before they reach here.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GitInfo {
+    pub is_repo: bool,
+    /// Branch name, or "(detached)" / "" when unknown.
+    pub branch: String,
+    pub detached: bool,
+    /// Short HEAD sha ("" when the repo has no commits yet).
+    pub head: String,
+    /// Last commit time (unix secs, 0 = unknown / no commits).
+    pub last_commit: i64,
+    pub dirty: bool,
+    /// Tracked files with staged/unstaged changes.
+    pub modified: u32,
+    pub untracked: u32,
+    pub ahead: u32,
+    pub behind: u32,
+    pub has_upstream: bool,
+    /// Credential-redacted remote URLs (deduped).
+    pub remotes: Vec<String>,
+    pub has_remote: bool,
+}
+
+/// A detected environment/secret file. The value/content is NEVER captured —
+/// only the variable count and whether Git is tracking it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvFile {
+    pub path: String,
+    pub name: String,
+    pub var_count: u32,
+    pub tracked_by_git: bool,
+}
+
+/// Per-project audit row: Git state, env files and derived severity/issues.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProjectAudit {
+    pub name: String,
+    pub path: String,
+    pub stack: Vec<String>,
+    pub size_bytes: u64,
+    pub git: GitInfo,
+    pub env_files: Vec<EnvFile>,
+    /// "critical" | "warning" | "ok".
+    pub severity: String,
+    pub issues: Vec<String>,
+}
+
+/// One installed developer tool and its version (machine-level inventory).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SoftwareItem {
+    pub name: String,
+    pub version: String,
+    pub found: bool,
+}
+
+/// The consolidated pre-reinstall audit report (§16-18 of the spec).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuditReport {
+    pub generated_at: i64,
+    pub projects: Vec<ProjectAudit>,
+    pub software: Vec<SoftwareItem>,
+    pub total_projects: usize,
+    pub git_repos: usize,
+    pub not_git: usize,
+    pub dirty: usize,
+    pub no_remote: usize,
+    pub unpushed: usize,
+    pub env_files_total: usize,
+    pub tracked_secrets: usize,
+    pub critical: Vec<String>,
+    pub warnings: Vec<String>,
+    pub safe_to_reinstall: bool,
+}

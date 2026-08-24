@@ -2,11 +2,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  AuditReport,
   BackupResult,
   DockerBackupResult,
   DockerStatus,
   JunkEntry,
   Project,
+  ProjectAudit,
   Readiness,
   WorkspaceStats,
 } from "./types";
@@ -28,7 +30,7 @@ const BACKUP_EXCLUDE = new Set([
   "node_modules", ".next", "dist", "build", "coverage", "target", "bin", "obj", "__pycache__", ".venv",
 ]);
 
-type Section = "overview" | "workspaces" | "cleanup" | "backup" | "settings";
+type Section = "overview" | "workspaces" | "cleanup" | "audit" | "backup" | "settings";
 
 async function openFolder(path: string) {
   try { await invoke("open_folder", { path }); } catch (e) { console.error(e); }
@@ -137,6 +139,7 @@ export default function App() {
     { id: "overview", label: "Overview", icon: "grid" },
     { id: "workspaces", label: "Workspaces", icon: "folder" },
     { id: "cleanup", label: "Cleanup", icon: "clean" },
+    { id: "audit", label: "Audit", icon: "shield" },
     { id: "backup", label: "Backup", icon: "download" },
     { id: "settings", label: "Settings", icon: "sliders" },
   ];
@@ -203,6 +206,7 @@ export default function App() {
           )
         )}
         {section === "cleanup" && <Cleanup projects={allProjects} onOpenProject={setPanel} />}
+        {section === "audit" && <Audit onOpenProject={setPanel} projects={allProjects} />}
         {section === "backup" && <Backup workspaces={workspaces} />}
         {section === "settings" && <Settings workspaces={workspaces} onChanged={load} />}
       </main>
@@ -242,6 +246,7 @@ function Icon({ name }: { name: string }) {
     case "download": return (<svg {...c}><path d="M12 4v11" /><path d="M8 11l4 4 4-4" /><path d="M5 20h14" /></svg>);
     case "sliders": return (<svg {...c}><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="15" cy="7" r="2.2" fill="var(--bg-side)" /><circle cx="9" cy="12" r="2.2" fill="var(--bg-side)" /><circle cx="16" cy="17" r="2.2" fill="var(--bg-side)" /></svg>);
     case "search": return (<svg {...c}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>);
+    case "shield": return (<svg {...c}><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" /><path d="M9 12l2 2 4-4" /></svg>);
     default: return null;
   }
 }
@@ -497,6 +502,129 @@ function CleanupGroup({ title, sub, rows }: { title: string; sub: string; rows: 
         </div>
       ))}
     </Section>
+  );
+}
+
+/* -------------------------------------------------------------------- Audit */
+
+const SEV_COLOR: Record<ProjectAudit["severity"], string> = {
+  critical: "var(--bad)",
+  warning: "var(--warn)",
+  ok: "var(--good)",
+};
+
+function Audit({ projects, onOpenProject }: { projects: Project[]; onOpenProject: (p: Project) => void }) {
+  const [report, setReport] = useState<AuditReport | null>(null);
+  const [running, setRunning] = useState(false);
+  const [msg, setMsg] = useState<string | null>(null);
+  const byPath = useMemo(() => new Map(projects.map((p) => [p.path, p])), [projects]);
+
+  async function run() {
+    setMsg(null); setRunning(true);
+    try { setReport(await invoke<AuditReport>("run_audit")); }
+    catch (e) { setMsg(String(e)); }
+    finally { setRunning(false); }
+  }
+  async function exportReport() {
+    if (!report) return;
+    const dir = await pickDir();
+    if (!dir) return;
+    try {
+      await invoke<string>("export_audit", { dir, report });
+      setMsg(`Exported audit.json + audit-report.md → ${dir}`);
+      await openFolder(dir);
+    } catch (e) { setMsg(String(e)); }
+  }
+
+  if (projects.filter((p) => !p.ignored).length === 0) {
+    return <Empty title="Nothing to audit yet" sub="Scan a workspace first, then run the pre-reinstall audit to find data-loss risks before you wipe this machine." />;
+  }
+
+  return (
+    <div className="page">
+      <div className="detail-head">
+        <div>
+          <h1 className="page-h1" style={{ margin: 0 }}>Pre-Reinstall Audit</h1>
+          <div className="block-sub">Read-only. Checks Git state, secrets and installed tools — nothing is modified.</div>
+        </div>
+        <div className="head-actions">
+          {report && <button className="btn-soft" onClick={exportReport}>Export report</button>}
+          <button className="btn" onClick={run} disabled={running}>{running ? "Auditing…" : report ? "Re-run" : "Run audit"}</button>
+        </div>
+      </div>
+      {msg && <div className="note">{msg}</div>}
+
+      {!report && !running && (
+        <p className="muted pad">Run the audit to answer: “if I wipe this machine tomorrow, is everything I need already committed, pushed or backed up?”</p>
+      )}
+
+      {report && (
+        <>
+          <div className={`verdict ${report.safe_to_reinstall ? "ok" : "bad"}`}>
+            {report.safe_to_reinstall ? "✓ Safe to reinstall — no critical data-loss risks found" : "✗ Not safe to reinstall — resolve the critical items below first"}
+          </div>
+
+          <div className="statline">
+            <span><b>{report.total_projects}</b> projects</span>
+            <span><b>{report.git_repos}</b> git · <b style={{ color: report.not_git ? "var(--bad)" : undefined }}>{report.not_git}</b> not git</span>
+            <span><b style={{ color: report.dirty ? "var(--bad)" : undefined }}>{report.dirty}</b> dirty</span>
+            <span><b style={{ color: report.no_remote ? "var(--bad)" : undefined }}>{report.no_remote}</b> no remote</span>
+            <span><b style={{ color: report.unpushed ? "var(--warn)" : undefined }}>{report.unpushed}</b> unpushed</span>
+            <span><b style={{ color: report.tracked_secrets ? "var(--bad)" : undefined }}>{report.tracked_secrets}</b> tracked secrets</span>
+          </div>
+
+          {report.critical.length > 0 && (
+            <Section title="🔴 Critical actions" subtitle="Fix before reinstalling — these risk permanent data loss">
+              {report.critical.map((c, i) => (
+                <div className="row" key={i}><div className="row-main"><div className="row-title">{c}</div></div></div>
+              ))}
+            </Section>
+          )}
+          {report.warnings.length > 0 && (
+            <Section title="🟡 Warnings">
+              {report.warnings.map((w, i) => (
+                <div className="row tight" key={i}><div className="row-main"><div className="row-title sm">{w}</div></div></div>
+              ))}
+            </Section>
+          )}
+
+          <Section title="Projects" subtitle="Worst first">
+            {report.projects.map((p) => {
+              const proj = byPath.get(p.path);
+              return (
+                <div className={`row${proj ? " clickable" : ""}`} key={p.path} onClick={() => proj && onOpenProject(proj)}>
+                  <span className="dot" style={{ background: SEV_COLOR[p.severity] }} />
+                  <div className="row-main">
+                    <div className="row-title">
+                      {p.name}
+                      {p.git.is_repo
+                        ? <span className="tag">{p.git.branch || "git"}{p.git.head ? ` · ${p.git.head}` : ""}</span>
+                        : <span className="tag warn">no git</span>}
+                      {p.env_files.map((e) => (
+                        <span key={e.name} className={`tag${e.tracked_by_git ? " warn" : ""}`}>{e.name} · {e.var_count}{e.tracked_by_git ? " · tracked!" : ""}</span>
+                      ))}
+                    </div>
+                    <div className="row-sub">
+                      {p.issues.length ? p.issues.join(" · ") : "no issues"}
+                      {p.git.has_remote && <span className="mono dim"> · {p.git.remotes[0]}</span>}
+                    </div>
+                  </div>
+                  <span className="mono muted sm">{formatBytes(p.size_bytes)}</span>
+                </div>
+              );
+            })}
+          </Section>
+
+          <Section title="Installed software" subtitle={`${report.software.filter((s) => s.found).length} of ${report.software.length} found`}>
+            <div className="chips pad">
+              {report.software.map((s) => (
+                <span key={s.name} className={`chip${s.found ? "" : " off"}`}>{s.name}{s.found && s.version ? ` ${s.version}` : ""}</span>
+              ))}
+            </div>
+          </Section>
+        </>
+      )}
+    </div>
   );
 }
 
