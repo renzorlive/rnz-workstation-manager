@@ -1,5 +1,6 @@
 //! RNZ Workstation Manager — Tauri backend entry point.
 
+mod assets;
 mod audit;
 mod backup;
 mod classify;
@@ -21,8 +22,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
 use model::{
-    AuditReport, BackupResult, DockerBackupResult, DockerStatus, Project, Readiness, Snapshot,
-    Workspace, WorkspaceStats,
+    AssetInventory, AuditReport, BackupResult, DockerBackupResult, DockerStatus, Project,
+    Readiness, Snapshot, Workspace, WorkspaceStats,
 };
 
 fn now_secs() -> i64 {
@@ -353,6 +354,16 @@ async fn run_audit(app: tauri::AppHandle) -> Result<AuditReport, String> {
         .map_err(|e| format!("audit failed: {e}"))
 }
 
+/// Read-only workstation asset discovery: dotfiles/dirs under home plus AppData
+/// app folders, classified for reinstall recovery. Never reads file contents.
+#[tauri::command]
+async fn discover_assets() -> Result<AssetInventory, String> {
+    let now = now_secs();
+    tauri::async_runtime::spawn_blocking(move || assets::discover(now))
+        .await
+        .map_err(|e| format!("asset discovery failed: {e}"))
+}
+
 /// Write the audit report to `dir` as both `audit.json` and `audit-report.md`.
 /// Returns the directory written to.
 #[tauri::command]
@@ -426,6 +437,7 @@ pub fn run() {
             backup_docker_volumes,
             run_audit,
             export_audit,
+            discover_assets,
             open_folder,
             open_vscode
         ])

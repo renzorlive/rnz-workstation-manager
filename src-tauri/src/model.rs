@@ -261,6 +261,79 @@ pub struct SoftwareItem {
     pub found: bool,
 }
 
+// ---------------------------------------------------------------------------
+// Workstation asset discovery (read-only) — everything OUTSIDE projects that
+// may be needed to rebuild the workstation after a Windows reinstall.
+// ---------------------------------------------------------------------------
+
+/// What kind of workstation asset a discovered directory/file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AssetCategory {
+    Config,
+    Credentials,
+    AiAgent,
+    LocalAi,
+    Docker,
+    Database,
+    PackageManager,
+    Browser,
+    Editor,
+    CloudCli,
+    Shell,
+    Application,
+    Cache,
+    Unknown,
+}
+
+impl AssetCategory {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            AssetCategory::Config => "config",
+            AssetCategory::Credentials => "credentials",
+            AssetCategory::AiAgent => "ai_agent",
+            AssetCategory::LocalAi => "local_ai",
+            AssetCategory::Docker => "docker",
+            AssetCategory::Database => "database",
+            AssetCategory::PackageManager => "package_manager",
+            AssetCategory::Browser => "browser",
+            AssetCategory::Editor => "editor",
+            AssetCategory::CloudCli => "cloud_cli",
+            AssetCategory::Shell => "shell",
+            AssetCategory::Application => "application",
+            AssetCategory::Cache => "cache",
+            AssetCategory::Unknown => "unknown",
+        }
+    }
+}
+
+/// One discovered workstation asset. Contents are never read — only metadata.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Asset {
+    pub name: String,
+    pub path: String,
+    pub category: AssetCategory,
+    /// Where it lives: "home" | "roaming" | "local" | "locallow".
+    pub location: String,
+    pub size_bytes: u64,
+    pub file_count: u64,
+    /// Holds credentials/tokens/keys — back up carefully, never expose values.
+    pub secret: bool,
+    /// Size was capped (huge tree) — `size_bytes` is a lower bound.
+    pub truncated: bool,
+}
+
+/// Result of a workstation asset scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AssetInventory {
+    pub generated_at: i64,
+    pub assets: Vec<Asset>,
+    pub total_size_bytes: u64,
+    pub secret_count: usize,
+    /// (category, count) pairs, largest first.
+    pub by_category: Vec<(String, usize)>,
+}
+
 /// The consolidated pre-reinstall audit report (§16-18 of the spec).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditReport {

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  AssetInventory,
   AuditReport,
   BackupResult,
   DockerBackupResult,
@@ -613,9 +614,7 @@ function Audit({ projects, onOpenProject }: { projects: Project[]; onOpenProject
     } catch (e) { setMsg(String(e)); }
   }
 
-  if (projects.filter((p) => !p.ignored && isRealProject(p)).length === 0) {
-    return <Empty title="Nothing to audit yet" sub="Scan a workspace first, then run the pre-reinstall audit to find data-loss risks before you wipe this machine." />;
-  }
+  const noProjects = projects.filter((p) => !p.ignored && isRealProject(p)).length === 0;
 
   return (
     <div className="page">
@@ -631,7 +630,10 @@ function Audit({ projects, onOpenProject }: { projects: Project[]; onOpenProject
       </div>
       {msg && <div className="note">{msg}</div>}
 
-      {!report && !running && (
+      {noProjects && (
+        <div className="note">No scanned projects yet — the Git/secrets audit needs a workspace scan first. Asset discovery below works independently.</div>
+      )}
+      {!noProjects && !report && !running && (
         <p className="muted pad">Run the audit to answer: “if I wipe this machine tomorrow, is everything I need already committed, pushed or backed up?”</p>
       )}
 
@@ -714,7 +716,79 @@ function Audit({ projects, onOpenProject }: { projects: Project[]; onOpenProject
           </Section>
         </>
       )}
+
+      <AssetsPanel />
     </div>
+  );
+}
+
+/* ------------------------------------------------------- Workstation assets */
+
+const ASSET_LABEL: Record<string, string> = {
+  config: "Config", credentials: "Credentials", ai_agent: "AI agents", local_ai: "Local AI",
+  docker: "Docker", database: "Databases", package_manager: "Package managers", browser: "Browsers",
+  editor: "Editors", cloud_cli: "Cloud CLIs", shell: "Shell", application: "Applications",
+  cache: "Cache", unknown: "Unknown",
+};
+
+function AssetsPanel() {
+  const [inv, setInv] = useState<AssetInventory | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [cat, setCat] = useState<string>("all");
+
+  async function run() {
+    setBusy(true);
+    try { setInv(await invoke<AssetInventory>("discover_assets")); }
+    catch (e) { console.error(e); }
+    finally { setBusy(false); }
+  }
+
+  const shown = useMemo(() => {
+    if (!inv) return [];
+    return cat === "all" ? inv.assets : inv.assets.filter((a) => a.category === cat);
+  }, [inv, cat]);
+
+  return (
+    <Section
+      title="Workstation assets"
+      subtitle="Configs, credentials, AI tools and app data outside your projects — what you'd need to rebuild this machine"
+      action={<button className="btn" onClick={run} disabled={busy}>{busy ? "Discovering…" : inv ? "Re-scan" : "Discover assets"}</button>}
+    >
+      {!inv && !busy && <p className="muted pad">Read-only. Enumerates <code className="code-inline">~/.*</code> and AppData — never reads file contents. Takes ~20s.</p>}
+      {busy && <p className="muted pad">Scanning home &amp; AppData…</p>}
+      {inv && (
+        <>
+          <div className="statline">
+            <span><b>{inv.assets.length}</b> assets</span>
+            <span><b>{formatBytes(inv.total_size_bytes)}</b> total</span>
+            <span><b style={{ color: inv.secret_count ? "var(--warn)" : undefined }}>{inv.secret_count}</b> with secrets</span>
+          </div>
+          <div className="quick pad">
+            <button className={cat === "all" ? "qf active" : "qf"} onClick={() => setCat("all")}>All</button>
+            {inv.by_category.map(([c, n]) => (
+              <button key={c} className={cat === c ? "qf active" : "qf"} onClick={() => setCat(c)}>{ASSET_LABEL[c] ?? c} {n}</button>
+            ))}
+          </div>
+          <div className="asset-list">
+            {shown.map((a) => (
+              <div className="row tight clickable" key={a.path} onClick={() => openFolder(a.path)}>
+                <span className="dot" style={{ background: a.secret ? "var(--warn)" : "#39404e" }} />
+                <div className="row-main">
+                  <div className="row-title sm">
+                    {a.name}
+                    <span className="tag">{ASSET_LABEL[a.category] ?? a.category}</span>
+                    {a.secret && <span className="tag warn">secret</span>}
+                    <span className="tag">{a.location}</span>
+                  </div>
+                  <div className="row-sub mono sm">{a.path}</div>
+                </div>
+                <span className="mono muted sm">{a.truncated ? "≥" : ""}{formatBytes(a.size_bytes)}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+    </Section>
   );
 }
 

@@ -163,6 +163,41 @@ export interface SoftwareItem {
   found: boolean;
 }
 
+export type AssetCategory =
+  | "config"
+  | "credentials"
+  | "ai_agent"
+  | "local_ai"
+  | "docker"
+  | "database"
+  | "package_manager"
+  | "browser"
+  | "editor"
+  | "cloud_cli"
+  | "shell"
+  | "application"
+  | "cache"
+  | "unknown";
+
+export interface Asset {
+  name: string;
+  path: string;
+  category: AssetCategory;
+  location: string;
+  size_bytes: number;
+  file_count: number;
+  secret: boolean;
+  truncated: boolean;
+}
+
+export interface AssetInventory {
+  generated_at: number;
+  assets: Asset[];
+  total_size_bytes: number;
+  secret_count: number;
+  by_category: [string, number][];
+}
+
 export interface AuditReport {
   generated_at: number;
   projects: ProjectAudit[];

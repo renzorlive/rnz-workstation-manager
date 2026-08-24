@@ -153,6 +153,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .verdict.ok { color: var(--good); background: rgba(53, 211, 154, 0.1); border-color: rgba(53, 211, 154, 0.3); }
 .verdict.bad { color: var(--bad); background: rgba(248, 113, 106, 0.1); border-color: rgba(248, 113, 106, 0.3); }
 .row-sub .dim { color: var(--faint); }
+.code-inline { font-family: ui-monospace, monospace; font-size: 12px; background: var(--surface-2); border-radius: 5px; padding: 1px 5px; }
+.asset-list { max-height: 46vh; overflow-y: auto; }
 
 /* ---- Buttons ---- */
 .btn {
