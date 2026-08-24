@@ -198,6 +198,31 @@ export interface AssetInventory {
   by_category: [string, number][];
 }
 
+export type MigrationStatus =
+  | "blocker"
+  | "manual_action"
+  | "not_backed_up"
+  | "backed_up"
+  | "ok";
+
+export interface MigrationItem {
+  category: string;
+  name: string;
+  detail: string;
+  path: string;
+  size_bytes: number;
+  status: MigrationStatus;
+  action: string;
+}
+
+export interface MigrationDiscovery {
+  generated_at: number;
+  items: MigrationItem[];
+  blockers: number;
+  manual_actions: number;
+  not_backed_up: number;
+}
+
 export interface AuditReport {
   generated_at: number;
   projects: ProjectAudit[];

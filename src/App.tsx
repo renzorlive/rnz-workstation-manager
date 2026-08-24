@@ -8,6 +8,8 @@ import type {
   DockerBackupResult,
   DockerStatus,
   JunkEntry,
+  MigrationDiscovery,
+  MigrationItem,
   Project,
   ProjectAudit,
   Readiness,
@@ -33,7 +35,7 @@ const BACKUP_EXCLUDE = new Set([
   "node_modules", ".next", "dist", "build", "coverage", "target", "bin", "obj", "__pycache__", ".venv",
 ]);
 
-type Section = "overview" | "workspaces" | "cleanup" | "audit" | "backup" | "settings";
+type Section = "overview" | "workspaces" | "cleanup" | "audit" | "migration" | "backup" | "settings";
 
 async function openFolder(path: string) {
   try { await invoke("open_folder", { path }); } catch (e) { console.error(e); }
@@ -151,6 +153,7 @@ export default function App() {
     { id: "workspaces", label: "Workspaces", icon: "folder" },
     { id: "cleanup", label: "Cleanup", icon: "clean" },
     { id: "audit", label: "Audit", icon: "shield" },
+    { id: "migration", label: "Migration", icon: "move" },
     { id: "backup", label: "Backup", icon: "download" },
     { id: "settings", label: "Settings", icon: "sliders" },
   ];
@@ -219,6 +222,7 @@ export default function App() {
         )}
         {section === "cleanup" && <Cleanup projects={allProjects} onOpenProject={setPanel} />}
         {section === "audit" && <Audit onOpenProject={setPanel} projects={allProjects} />}
+        {section === "migration" && <Migration />}
         {section === "backup" && <Backup workspaces={workspaces} />}
         {section === "settings" && <Settings workspaces={workspaces} onChanged={load} />}
       </main>
@@ -259,6 +263,7 @@ function Icon({ name }: { name: string }) {
     case "sliders": return (<svg {...c}><path d="M4 7h16M4 12h16M4 17h16" /><circle cx="15" cy="7" r="2.2" fill="var(--bg-side)" /><circle cx="9" cy="12" r="2.2" fill="var(--bg-side)" /><circle cx="16" cy="17" r="2.2" fill="var(--bg-side)" /></svg>);
     case "search": return (<svg {...c}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3" /></svg>);
     case "shield": return (<svg {...c}><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z" /><path d="M9 12l2 2 4-4" /></svg>);
+    case "move": return (<svg {...c}><path d="M4 8h11" /><path d="M12 5l3 3-3 3" /><path d="M20 16H9" /><path d="M12 13l-3 3 3 3" /></svg>);
     default: return null;
   }
 }
@@ -789,6 +794,84 @@ function AssetsPanel() {
         </>
       )}
     </Section>
+  );
+}
+
+/* ---------------------------------------------------------------- Migration */
+
+const MIG_STATUS: Record<MigrationItem["status"], { label: string; color: string }> = {
+  blocker: { label: "BLOCKER", color: "var(--bad)" },
+  manual_action: { label: "MANUAL", color: "var(--warn)" },
+  not_backed_up: { label: "NOT BACKED UP", color: "var(--cleanable)" },
+  backed_up: { label: "BACKED UP", color: "var(--good)" },
+  ok: { label: "OK", color: "var(--good)" },
+};
+
+function Migration() {
+  const [disc, setDisc] = useState<MigrationDiscovery | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true); setErr(null);
+    try { setDisc(await invoke<MigrationDiscovery>("discover_migration")); }
+    catch (e) { setErr(String(e)); }
+    finally { setBusy(false); }
+  }
+
+  const safe = disc ? disc.blockers === 0 : false;
+
+  return (
+    <div className="page">
+      <div className="detail-head">
+        <div>
+          <h1 className="page-h1" style={{ margin: 0 }}>Migration</h1>
+          <div className="block-sub">System-level things a reinstall would lose that project &amp; asset scans miss — browsers, wallets, VMs, native DBs, WSL.</div>
+        </div>
+        <button className="btn" onClick={run} disabled={busy}>{busy ? "Scanning…" : disc ? "Re-scan" : "Scan system"}</button>
+      </div>
+      {err && <div className="note err">{err}</div>}
+
+      {!disc && !busy && (
+        <p className="muted pad">Read-only. Detects what needs migrating and flags what <b>can't</b> be backed up as files (wallet seed phrases, device-bound passkeys) so a “safe to reinstall” verdict can be computed, not guessed.</p>
+      )}
+
+      {disc && (
+        <>
+          <div className={`verdict ${safe ? "ok" : "bad"}`}>
+            {disc.blockers > 0
+              ? `✗ NOT SAFE TO REINSTALL — ${disc.blockers} blocker${disc.blockers === 1 ? "" : "s"} (discovery only; backup/verify still pending)`
+              : "No hard blockers found — but backup + verify are not implemented yet, so this is not yet a green light"}
+          </div>
+          <div className="statline">
+            <span><b style={{ color: disc.blockers ? "var(--bad)" : undefined }}>{disc.blockers}</b> blockers</span>
+            <span><b style={{ color: disc.manual_actions ? "var(--warn)" : undefined }}>{disc.manual_actions}</b> manual</span>
+            <span><b>{disc.not_backed_up}</b> to back up</span>
+          </div>
+
+          <Section title="Discovered" subtitle="Worst first">
+            {disc.items.map((it, i) => {
+              const s = MIG_STATUS[it.status];
+              return (
+                <div className={`row${it.path ? " clickable" : ""}`} key={i} onClick={() => it.path && openFolder(it.path)}>
+                  <span className="dot" style={{ background: s.color }} />
+                  <div className="row-main">
+                    <div className="row-title">
+                      {it.name}
+                      <span className="tag" style={{ color: s.color }}>{s.label}</span>
+                      <span className="tag">{it.category}</span>
+                    </div>
+                    <div className="row-sub">{it.detail}</div>
+                    <div className="row-sub dim">→ {it.action}</div>
+                  </div>
+                  {it.size_bytes > 0 && <span className="mono muted sm">{formatBytes(it.size_bytes)}</span>}
+                </div>
+              );
+            })}
+          </Section>
+        </>
+      )}
+    </div>
   );
 }
 

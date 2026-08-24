@@ -10,6 +10,7 @@ mod docker;
 mod git;
 mod health;
 mod junk;
+mod migration;
 mod model;
 mod recovery;
 mod scanner;
@@ -22,8 +23,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::Manager;
 
 use model::{
-    AssetInventory, AuditReport, BackupResult, DockerBackupResult, DockerStatus, Project,
-    Readiness, Snapshot, Workspace, WorkspaceStats,
+    AssetInventory, AuditReport, BackupResult, DockerBackupResult, DockerStatus, MigrationDiscovery,
+    Project, Readiness, Snapshot, Workspace, WorkspaceStats,
 };
 
 fn now_secs() -> i64 {
@@ -364,6 +365,16 @@ async fn discover_assets() -> Result<AssetInventory, String> {
         .map_err(|e| format!("asset discovery failed: {e}"))
 }
 
+/// Read-only migration discovery: browsers/wallets, VMs, native databases and
+/// WSL distros a reinstall would lose, each with a backup-readiness status.
+#[tauri::command]
+async fn discover_migration() -> Result<MigrationDiscovery, String> {
+    let now = now_secs();
+    tauri::async_runtime::spawn_blocking(move || migration::discover(now))
+        .await
+        .map_err(|e| format!("migration discovery failed: {e}"))
+}
+
 /// Write the audit report to `dir` as both `audit.json` and `audit-report.md`.
 /// Returns the directory written to.
 #[tauri::command]
@@ -438,6 +449,7 @@ pub fn run() {
             run_audit,
             export_audit,
             discover_assets,
+            discover_migration,
             open_folder,
             open_vscode
         ])

@@ -334,6 +334,67 @@ pub struct AssetInventory {
     pub by_category: Vec<(String, usize)>,
 }
 
+// ---------------------------------------------------------------------------
+// Migration discovery (read-only) — system-level things a Windows reinstall
+// would lose that project/asset discovery doesn't see: browser profiles,
+// crypto wallets, VMs, native databases, WSL. Each item carries a status so a
+// real "safe to reinstall" verdict can later be COMPUTED, never hand-checked.
+// ---------------------------------------------------------------------------
+
+/// Backup-readiness of a discovered migration item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MigrationStatus {
+    /// Irreversible if lost and NOT file-backupable (e.g. wallet seed phrase,
+    /// device-bound passkeys). Blocks a safe reinstall until resolved.
+    Blocker,
+    /// Needs a human action/verification the tool can't do (sync, alt-login).
+    ManualAction,
+    /// Discoverable and backupable later, but not backed up yet.
+    NotBackedUp,
+    /// Confirmed backed up (set by the backup layer, not discovery).
+    BackedUp,
+    /// Present and not a risk.
+    Ok,
+}
+
+impl MigrationStatus {
+    pub fn rank(self) -> u8 {
+        match self {
+            MigrationStatus::Blocker => 0,
+            MigrationStatus::ManualAction => 1,
+            MigrationStatus::NotBackedUp => 2,
+            MigrationStatus::BackedUp => 3,
+            MigrationStatus::Ok => 4,
+        }
+    }
+}
+
+/// One system-level thing to migrate. Contents are never read.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationItem {
+    /// "browser" | "wallet" | "vm" | "database" | "wsl" | "passkeys".
+    pub category: String,
+    pub name: String,
+    /// Human-readable summary of what was found.
+    pub detail: String,
+    pub path: String,
+    pub size_bytes: u64,
+    pub status: MigrationStatus,
+    /// What the user must do (or what backup will do).
+    pub action: String,
+}
+
+/// Result of a system migration scan.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MigrationDiscovery {
+    pub generated_at: i64,
+    pub items: Vec<MigrationItem>,
+    pub blockers: usize,
+    pub manual_actions: usize,
+    pub not_backed_up: usize,
+}
+
 /// The consolidated pre-reinstall audit report (§16-18 of the spec).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AuditReport {
