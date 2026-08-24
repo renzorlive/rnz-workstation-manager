@@ -125,7 +125,16 @@ async fn scan_workspace(app: tauri::AppHandle, id: i64) -> Result<WorkspaceStats
         return Err(format!("workspace path missing: {}", ws.path));
     }
 
-    let projects = tauri::async_runtime::spawn_blocking(move || scanner::scan(&root))
+    // Skip sub-folders that are themselves registered workspaces, so an outer
+    // workspace never steals a nested one's projects.
+    let excludes: Vec<PathBuf> = db::all_workspaces(&conn)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .filter(|w| w.id != id)
+        .map(|w| PathBuf::from(w.path))
+        .collect();
+
+    let projects = tauri::async_runtime::spawn_blocking(move || scanner::scan_excluding(&root, &excludes))
         .await
         .map_err(|e| format!("scan task failed: {e}"))?;
 

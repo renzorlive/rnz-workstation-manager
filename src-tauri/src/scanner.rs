@@ -3,7 +3,7 @@
 //! (project, container, cache, application data, archive, file, …) so caches and
 //! application data never inflate the project counts.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -21,10 +21,32 @@ const BUILD_CATS: &[&str] = &[
     ".next", "dist", "build", "coverage", "target", "bin", "obj", "__pycache__", ".venv",
 ];
 
+/// Normalize a path for cross-platform set comparison (lowercase, `\` seps,
+/// no trailing separator).
+fn norm(path: &Path) -> String {
+    path.to_string_lossy()
+        .to_lowercase()
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_string()
+}
+
 /// Scan `root` recursively and return every detected item.
 pub fn scan(root: &Path) -> Vec<Project> {
+    scan_excluding(root, &[])
+}
+
+/// Scan `root`, skipping any sub-directory that is itself a registered workspace
+/// (`excludes`). This prevents an outer workspace (e.g. `C:\Users\me`) from
+/// stealing the projects of a nested one (e.g. `…\Downloads`).
+pub fn scan_excluding(root: &Path, excludes: &[PathBuf]) -> Vec<Project> {
     let now = now_secs();
     let mut items: Vec<Project> = Vec::new();
+    let skip: HashSet<String> = excludes
+        .iter()
+        .map(|p| norm(p))
+        .filter(|s| s != &norm(root)) // never skip the root we're scanning
+        .collect();
 
     // The workspace root is authority. Collapse it into a single project ONLY
     // when it genuinely is one: it has its own .git, or it contains no child
@@ -43,7 +65,7 @@ pub fn scan(root: &Path) -> Vec<Project> {
     // Root level: dirs are traversed; loose files become Archive/File items so a
     // real dev workspace like Downloads reports its clutter too.
     let mut stack: Vec<PathBuf> = Vec::new();
-    visit_root(root, &mut stack, &mut items, now);
+    visit_root(root, &mut stack, &mut items, now, &skip);
 
     while let Some(dir) = stack.pop() {
         // Location-based classification (cache / store / appdata / system). A
@@ -79,14 +101,20 @@ pub fn scan(root: &Path) -> Vec<Project> {
             continue;
         }
 
-        push_children(&dir, &mut stack);
+        push_children(&dir, &mut stack, &skip);
     }
 
     items
 }
 
 /// Enumerate the workspace root: push child dirs, emit loose files as items.
-fn visit_root(root: &Path, stack: &mut Vec<PathBuf>, items: &mut Vec<Project>, now: i64) {
+fn visit_root(
+    root: &Path,
+    stack: &mut Vec<PathBuf>,
+    items: &mut Vec<Project>,
+    now: i64,
+    skip: &HashSet<String>,
+) {
     let entries = match std::fs::read_dir(root) {
         Ok(e) => e,
         Err(_) => return,
@@ -96,7 +124,11 @@ fn visit_root(root: &Path, stack: &mut Vec<PathBuf>, items: &mut Vec<Project>, n
         let name = entry.file_name();
         let name = name.to_string_lossy();
         if path.is_dir() {
-            if junk::is_junk_dir(&name) || detector::is_skip_dir(&name) || name.starts_with('.') {
+            if junk::is_junk_dir(&name)
+                || detector::is_skip_dir(&name)
+                || name.starts_with('.')
+                || skip.contains(&norm(&path))
+            {
                 continue;
             }
             stack.push(path);
@@ -111,7 +143,7 @@ fn is_system_file(name: &str) -> bool {
     matches!(l.as_str(), "desktop.ini" | "thumbs.db" | "ntuser.dat" | "ntuser.ini")
 }
 
-fn push_children(dir: &Path, stack: &mut Vec<PathBuf>) {
+fn push_children(dir: &Path, stack: &mut Vec<PathBuf>, skip: &HashSet<String>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -120,7 +152,11 @@ fn push_children(dir: &Path, stack: &mut Vec<PathBuf>) {
             }
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if junk::is_junk_dir(&name) || detector::is_skip_dir(&name) || name.starts_with('.') {
+            if junk::is_junk_dir(&name)
+                || detector::is_skip_dir(&name)
+                || name.starts_with('.')
+                || skip.contains(&norm(&path))
+            {
                 continue;
             }
             stack.push(path);
@@ -376,6 +412,29 @@ mod tests {
         assert_eq!(count(&items, ItemType::Archive), 1, "random.zip is an archive");
         // The stray package.json becomes a loose File, not a project root swallowing all.
         assert!(items.iter().any(|i| i.name == "package.json" && i.item_type == ItemType::File));
+
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn nested_registered_workspace_is_skipped() {
+        // Scanning an outer workspace must not descend into a nested one, so it
+        // can't steal the nested workspace's projects.
+        let root = tmp("outer");
+        let inner = root.join("Downloads");
+        fs::create_dir_all(&inner).unwrap();
+        let proj = inner.join("client-a");
+        fs::create_dir_all(&proj).unwrap();
+        fs::write(proj.join("package.json"), "{}").unwrap();
+
+        let all = super::scan(&root);
+        assert!(all.iter().any(|i| i.name == "client-a"), "found without exclude");
+
+        let excluded = super::scan_excluding(&root, &[inner.clone()]);
+        assert!(
+            !excluded.iter().any(|i| i.path.to_lowercase().contains("downloads")),
+            "nested workspace must be skipped entirely"
+        );
 
         let _ = fs::remove_dir_all(&root);
     }

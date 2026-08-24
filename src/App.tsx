@@ -203,6 +203,7 @@ export default function App() {
               scanningId={scanningId}
               onOpen={setSelWs}
               onScan={scanWs}
+              onChanged={load}
             />
           ) : (
             <WorkspaceDetail
@@ -355,20 +356,82 @@ function Overview({
 
 /* --------------------------------------------------------------- Workspaces */
 
+function AddWorkspaceModal({
+  index, onClose, onAdded,
+}: {
+  index: number;
+  onClose: () => void;
+  onAdded: () => void;
+}) {
+  const [path, setPath] = useState("");
+  const [name, setName] = useState("");
+  const [err, setErr] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function pick() {
+    const d = await pickDir();
+    if (d) { setPath(d); if (!name) setName(d.split(/[\\/]/).filter(Boolean).pop() || ""); }
+  }
+  async function submit() {
+    if (!path || !name) return;
+    setBusy(true); setErr(null);
+    try {
+      await invoke("add_workspace", { name, path, color: COLORS[index % COLORS.length] });
+      onAdded();
+      onClose();
+    } catch (e) { setErr(String(e)); setBusy(false); }
+  }
+
+  return (
+    <div className="palette-overlay" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-title">Add workspace</div>
+        <label className="modal-label">Folder</label>
+        <div className="path-pick">
+          <code className="code">{path || "no folder selected"}</code>
+          <button className="btn-soft" onClick={pick}>Browse…</button>
+        </div>
+        <label className="modal-label">Name</label>
+        <input className="input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        {err && <div className="note err">{err}</div>}
+        <div className="modal-actions">
+          <button className="btn-soft" onClick={onClose}>Cancel</button>
+          <button className="btn" disabled={!path || !name || busy} onClick={submit}>{busy ? "Adding…" : "Add workspace"}</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function WorkspacesList({
-  workspaces, scanningId, onOpen, onScan,
+  workspaces, scanningId, onOpen, onScan, onChanged,
 }: {
   workspaces: WorkspaceStats[];
   scanningId: number | null;
   onOpen: (id: number) => void;
   onScan: (id: number) => void;
+  onChanged: () => void;
 }) {
-  if (workspaces.length === 0) {
-    return <Empty title="No workspaces yet" sub="Add one in Settings, or find them automatically by scanning your computer." />;
-  }
+  const [adding, setAdding] = useState(false);
   return (
     <div className="page">
-      <h1 className="page-h1">Workspaces</h1>
+      <div className="detail-head">
+        <div>
+          <h1 className="page-h1" style={{ margin: 0 }}>Workspaces</h1>
+          <div className="block-sub">The folders you work in and want RNZ to track.</div>
+        </div>
+        <button className="btn" onClick={() => setAdding(true)}>+ Add workspace</button>
+      </div>
+      {adding && (
+        <AddWorkspaceModal
+          index={workspaces.length}
+          onClose={() => setAdding(false)}
+          onAdded={onChanged}
+        />
+      )}
+      {workspaces.length === 0 && (
+        <Empty title="No workspaces yet" sub="Add a folder you work in — Downloads, a projects drive, anything. RNZ classifies what's inside." />
+      )}
       <div className="rows">
         {workspaces.map((w) => (
           <div className="row clickable" key={w.workspace.id} onClick={() => onOpen(w.workspace.id)}>
@@ -773,25 +836,14 @@ function Backup({ workspaces }: { workspaces: WorkspaceStats[] }) {
 /* ----------------------------------------------------------------- Settings */
 
 function Settings({ workspaces, onChanged }: { workspaces: WorkspaceStats[]; onChanged: () => void }) {
-  const [name, setName] = useState("");
-  const [path, setPath] = useState("");
-  const [color, setColor] = useState(COLORS[0]);
   const [discovered, setDiscovered] = useState<Project[] | null>(null);
   const [scanning, setScanning] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  async function pick() {
-    const d = await pickDir();
-    if (d) {
-      setPath(d);
-      if (!name) setName(d.split(/[\\/]/).filter(Boolean).pop() || "");
-    }
-  }
-  async function add(p?: string, n?: string) {
+  async function add(p: string, n: string) {
     setErr(null);
-    const np = p ?? path, nn = n ?? name;
-    if (!np || !nn) return;
-    try { await invoke("add_workspace", { name: nn, path: np, color }); setName(""); setPath(""); await onChanged(); }
+    if (!p || !n) return;
+    try { await invoke("add_workspace", { name: n, path: p, color: COLORS[workspaces.length % COLORS.length] }); await onChanged(); }
     catch (e) { setErr(String(e)); }
   }
   async function remove(id: number) {
@@ -815,23 +867,7 @@ function Settings({ workspaces, onChanged }: { workspaces: WorkspaceStats[]; onC
       <h1 className="page-h1">Settings</h1>
       {err && <div className="note err">{err}</div>}
 
-      <Section title="Add a workspace">
-        <div className="form">
-          <div className="path-pick">
-            <code className="code">{path || "no folder selected"}</code>
-            <button className="btn-soft" onClick={pick}>Browse…</button>
-          </div>
-          <input className="input" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} />
-          <div className="swatches">
-            {COLORS.map((c) => (
-              <button key={c} className={`swatch${c === color ? " active" : ""}`} style={{ background: c }} onClick={() => setColor(c)} />
-            ))}
-          </div>
-          <button className="btn" disabled={!name || !path} onClick={() => add()}>Add workspace</button>
-        </div>
-      </Section>
-
-      <Section title="Find projects" subtitle="Scan your computer when you don't know where they live">
+      <Section title="Find projects" subtitle="Scan your computer to discover folders, then add them as workspaces">
         <div className="head-actions pad">
           <button className="btn" onClick={() => discover("")} disabled={scanning}>{scanning ? "Scanning…" : "Scan my home folder"}</button>
           <button className="btn-soft" onClick={async () => { const d = await pickDir(); if (d) discover(d); }} disabled={scanning}>Choose folder…</button>
