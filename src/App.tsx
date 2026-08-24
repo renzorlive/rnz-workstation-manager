@@ -26,6 +26,8 @@ import {
 } from "./format";
 
 const COLORS = ["#6f8cff", "#34d399", "#f5b34a", "#f8716a", "#9a6bff", "#22d3ee"];
+/** Real user code — a project or a container of projects (not cache/appdata/file). */
+const isRealProject = (p: Project) => p.item_type === "project" || p.item_type === "project_container";
 const BACKUP_EXCLUDE = new Set([
   "node_modules", ".next", "dist", "build", "coverage", "target", "bin", "obj", "__pycache__", ".venv",
 ]);
@@ -50,6 +52,14 @@ function weightedHealth(ws: WorkspaceStats[]): number {
   let num = 0, den = 0;
   for (const w of ws) { num += w.health_score * w.project_count; den += w.project_count; }
   return den ? Math.round(num / den) : 100;
+}
+function workspaceBreakdown(w: WorkspaceStats): string {
+  const parts: string[] = [`${w.discovered_items} discovered`];
+  if (w.container_count) parts.push(`${w.container_count} containers`);
+  if (w.cache_count) parts.push(`${w.cache_count} cache`);
+  if (w.appdata_count) parts.push(`${w.appdata_count} app data`);
+  if (w.other_count) parts.push(`${w.other_count} other`);
+  return parts.join(" · ");
 }
 function parentOf(path: string): string {
   const i = Math.max(path.lastIndexOf("\\"), path.lastIndexOf("/"));
@@ -279,7 +289,9 @@ function Overview({
 }) {
   const [sortBy, setSortBy] = useState<"junk" | "size" | "health" | "recent">("junk");
   const [filter, setFilter] = useState<"all" | "junk" | "nogit" | "stale">("all");
-  const active = projects.filter((p) => !p.ignored);
+  const discovered = projects.filter((p) => !p.ignored);
+  const active = discovered.filter(isRealProject);
+  const projectCount = discovered.filter((p) => p.item_type === "project").length;
   const recoverable = workspaces.reduce((a, w) => a + w.total_junk_bytes, 0);
   const health = weightedHealth(workspaces);
 
@@ -312,7 +324,8 @@ function Overview({
     <div className="page">
       <h1 className="page-h1">Overview</h1>
       <div className="statline">
-        <span><b>{active.length}</b> projects</span>
+        <span><b>{projectCount}</b> projects</span>
+        {discovered.length > active.length && <span><b>{discovered.length}</b> discovered items</span>}
         <span><b className="cleanable">{formatBytes(recoverable)}</b> recoverable</span>
         <span><b style={{ color: healthColor(health) }}>{health}</b> avg health</span>
         {safe > 0 && <button className="statline-link" onClick={() => onGo("cleanup")}>{formatBytes(safe)} safe to clean →</button>}
@@ -363,6 +376,7 @@ function WorkspacesList({
             <div className="row-main">
               <div className="row-title">{w.workspace.name}</div>
               <div className="row-sub">{w.workspace.path}</div>
+              <div className="row-sub dim">{workspaceBreakdown(w)}</div>
             </div>
             <div className="row-cols">
               <Col label="projects" value={String(w.project_count)} />
@@ -440,7 +454,7 @@ function WorkspaceDetail({
 /* ------------------------------------------------------------------ Cleanup */
 
 function Cleanup({ projects, onOpenProject }: { projects: Project[]; onOpenProject: (p: Project) => void }) {
-  const active = projects.filter((p) => !p.ignored);
+  const active = projects.filter((p) => !p.ignored && isRealProject(p));
   const { groups, totals } = useMemo(() => {
     const agg = new Map<string, number>();
     for (const p of active) for (const j of p.junk_detail) agg.set(j.name, (agg.get(j.name) ?? 0) + j.bytes);
@@ -536,7 +550,7 @@ function Audit({ projects, onOpenProject }: { projects: Project[]; onOpenProject
     } catch (e) { setMsg(String(e)); }
   }
 
-  if (projects.filter((p) => !p.ignored).length === 0) {
+  if (projects.filter((p) => !p.ignored && isRealProject(p)).length === 0) {
     return <Empty title="Nothing to audit yet" sub="Scan a workspace first, then run the pre-reinstall audit to find data-loss risks before you wipe this machine." />;
   }
 
@@ -564,8 +578,21 @@ function Audit({ projects, onOpenProject }: { projects: Project[]; onOpenProject
             {report.safe_to_reinstall ? "✓ Safe to reinstall — no critical data-loss risks found" : "✗ Not safe to reinstall — resolve the critical items below first"}
           </div>
 
+          <Section title="Discovery" subtitle={`${report.discovered_items} discovered items, classified by evidence — not by folder name`}>
+            <div className="chips pad">
+              <span className="chip"><b>{report.real_projects}</b> real projects</span>
+              <span className="chip"><b>{report.containers}</b> containers</span>
+              <span className="chip"><b>{report.caches}</b> cache / stores</span>
+              <span className="chip"><b>{report.application_data}</b> application data</span>
+              <span className="chip"><b>{report.other_items}</b> other</span>
+            </div>
+            {report.discovery_warnings.map((w, i) => (
+              <div className="row tight" key={i}><div className="row-main"><div className="row-title sm">⚠ {w}</div></div></div>
+            ))}
+          </Section>
+
           <div className="statline">
-            <span><b>{report.total_projects}</b> projects</span>
+            <span><b>{report.total_projects}</b> projects audited</span>
             <span><b>{report.git_repos}</b> git · <b style={{ color: report.not_git ? "var(--bad)" : undefined }}>{report.not_git}</b> not git</span>
             <span><b style={{ color: report.dirty ? "var(--bad)" : undefined }}>{report.dirty}</b> dirty</span>
             <span><b style={{ color: report.no_remote ? "var(--bad)" : undefined }}>{report.no_remote}</b> no remote</span>
@@ -779,7 +806,7 @@ function Settings({ workspaces, onChanged }: { workspaces: WorkspaceStats[]; onC
   const groups = useMemo(() => {
     if (!discovered) return [];
     const m = new Map<string, Project[]>();
-    for (const p of discovered) { const par = parentOf(p.path); (m.get(par) ?? m.set(par, []).get(par)!).push(p); }
+    for (const p of discovered.filter(isRealProject)) { const par = parentOf(p.path); (m.get(par) ?? m.set(par, []).get(par)!).push(p); }
     return [...m.entries()].map(([par, ps]) => ({ par, ps })).sort((a, b) => b.ps.length - a.ps.length);
   }, [discovered]);
 

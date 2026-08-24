@@ -2,6 +2,7 @@
 
 mod audit;
 mod backup;
+mod classify;
 mod db;
 mod detector;
 mod docker;
@@ -183,6 +184,7 @@ fn create_recovery_pack(
     let projects = db::all_projects(&conn).map_err(|e| e.to_string())?;
     let inventory: Vec<serde_json::Value> = projects
         .iter()
+        .filter(|p| p.item_type.is_real())
         .map(|p| {
             serde_json::json!({
                 "name": p.name,

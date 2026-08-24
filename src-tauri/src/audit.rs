@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use crate::model::{AuditReport, EnvFile, Project, ProjectAudit};
+use crate::model::{AuditReport, EnvFile, ItemType, Project, ProjectAudit};
 use crate::{git, secrets, software};
 
 /// Ordered severity so a project keeps only its worst issue level.
@@ -27,8 +27,30 @@ pub fn run(projects: Vec<Project>, now: i64) -> AuditReport {
     let (mut git_repos, mut not_git, mut dirty, mut no_remote, mut unpushed) = (0, 0, 0, 0, 0);
     let (mut env_total, mut tracked_secrets) = (0usize, 0usize);
 
+    // ---- Discovery buckets (over every non-ignored discovered item) ----
+    let (mut discovered, mut real_projects, mut containers) = (0usize, 0usize, 0usize);
+    let (mut caches, mut application_data, mut other_items, mut unknowns) = (0, 0, 0, 0);
     for p in &projects {
         if p.ignored {
+            continue;
+        }
+        discovered += 1;
+        match p.item_type {
+            ItemType::Project => real_projects += 1,
+            ItemType::ProjectContainer => containers += 1,
+            ItemType::Cache | ItemType::DependencyStore => caches += 1,
+            ItemType::ApplicationData => application_data += 1,
+            ItemType::Unknown => {
+                unknowns += 1;
+                other_items += 1;
+            }
+            _ => other_items += 1,
+        }
+    }
+
+    // Git/secrets audit runs ONLY on real projects (§9).
+    for p in &projects {
+        if p.ignored || !p.item_type.is_project() {
             continue;
         }
         let dir = Path::new(&p.path);
@@ -133,11 +155,25 @@ pub fn run(projects: Vec<Project>, now: i64) -> AuditReport {
     }
     warnings.push("Git remote reachability not checked (offline audit) — verify remotes manually.".into());
 
+    let mut discovery_warnings: Vec<String> = Vec::new();
+    if unknowns > 0 {
+        discovery_warnings.push(format!(
+            "{unknowns} unclassified director(ies) surfaced — review whether any are real projects"
+        ));
+    }
+
     let software = software::inventory();
     let safe_to_reinstall = critical.is_empty();
 
     AuditReport {
         generated_at: now,
+        discovered_items: discovered,
+        real_projects,
+        containers,
+        caches,
+        application_data,
+        other_items,
+        discovery_warnings,
         total_projects: rows.len(),
         git_repos,
         not_git,
@@ -163,8 +199,16 @@ pub fn to_markdown(r: &AuditReport) -> String {
         if r.safe_to_reinstall { "YES" } else { "NO" }
     ));
 
-    s.push_str("## Summary\n\n");
-    s.push_str(&format!("- Projects: {}\n", r.total_projects));
+    s.push_str("## Discovery\n\n");
+    s.push_str(&format!("- Discovered items: {}\n", r.discovered_items));
+    s.push_str(&format!("- Real projects: {}\n", r.real_projects));
+    s.push_str(&format!("- Project containers: {}\n", r.containers));
+    s.push_str(&format!("- Cache / dependency stores: {}\n", r.caches));
+    s.push_str(&format!("- Application data: {}\n", r.application_data));
+    s.push_str(&format!("- Other (files/archives/unknown): {}\n\n", r.other_items));
+
+    s.push_str("## Summary (real projects)\n\n");
+    s.push_str(&format!("- Projects audited: {}\n", r.total_projects));
     s.push_str(&format!("- Git repos: {} (not git: {})\n", r.git_repos, r.not_git));
     s.push_str(&format!("- Uncommitted (dirty): {}\n", r.dirty));
     s.push_str(&format!("- No remote: {}\n", r.no_remote));

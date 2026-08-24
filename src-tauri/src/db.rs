@@ -5,7 +5,7 @@ use std::path::Path;
 
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::model::{JunkEntry, Project, Snapshot, Workspace, WorkspaceStats};
+use crate::model::{ItemType, JunkEntry, Project, Snapshot, Workspace, WorkspaceStats};
 
 const DAY: i64 = 86_400;
 
@@ -27,6 +27,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
             id                 INTEGER PRIMARY KEY AUTOINCREMENT,
             path               TEXT NOT NULL UNIQUE,
             name               TEXT NOT NULL,
+            item_type          TEXT NOT NULL DEFAULT 'unknown',
             stack              TEXT NOT NULL,
             size_bytes         INTEGER NOT NULL,
             junk_bytes         INTEGER NOT NULL,
@@ -62,6 +63,7 @@ pub fn open(path: &Path) -> rusqlite::Result<Connection> {
     ensure_column(&conn, "projects", "workspace_id", "INTEGER")?;
     ensure_column(&conn, "projects", "confidence", "INTEGER NOT NULL DEFAULT 0")?;
     ensure_column(&conn, "projects", "junk_detail", "TEXT NOT NULL DEFAULT '[]'")?;
+    ensure_column(&conn, "projects", "item_type", "TEXT NOT NULL DEFAULT 'unknown'")?;
     conn.execute(
         "CREATE INDEX IF NOT EXISTS idx_projects_ws ON projects(workspace_id)",
         [],
@@ -184,15 +186,23 @@ pub fn current_snapshot(conn: &Connection, workspace_id: i64, now: i64) -> rusql
     let mut total_junk = 0u64;
     let (mut active, mut dormant, mut archived) = (0usize, 0usize, 0usize);
     let mut health_sum = 0i64;
-    let mut count = 0usize;
+    let mut real_count = 0usize; // projects + containers (for size/junk/health)
+    let mut count = 0usize; // real projects only (headline count + activity)
     for p in &projects {
-        if p.ignored {
+        if p.ignored || !p.item_type.is_real() {
             continue;
         }
-        count += 1;
+        // Size, junk and health span real code (projects + containers).
+        real_count += 1;
         total_size += p.size_bytes;
         total_junk += p.junk_bytes;
         health_sum += p.health_score as i64;
+
+        // Headline project count and activity buckets: real projects only.
+        if !p.item_type.is_project() {
+            continue;
+        }
+        count += 1;
         if p.last_activity == 0 {
             archived += 1;
         } else {
@@ -206,10 +216,10 @@ pub fn current_snapshot(conn: &Connection, workspace_id: i64, now: i64) -> rusql
             }
         }
     }
-    let health = if count == 0 {
+    let health = if real_count == 0 {
         100
     } else {
-        (health_sum as f64 / count as f64).round() as i32
+        (health_sum as f64 / real_count as f64).round() as i32
     };
     Ok(Snapshot {
         id: 0,
@@ -306,9 +316,28 @@ pub fn workspace_stats(conn: &Connection, ws: Workspace, now: i64) -> rusqlite::
         (None, None, None)
     };
     let projects = projects_for_workspace(conn, ws.id)?;
+    let (mut discovered, mut container, mut cache, mut appdata, mut other) = (0, 0, 0, 0, 0);
+    for p in &projects {
+        if p.ignored {
+            continue;
+        }
+        discovered += 1;
+        match p.item_type {
+            ItemType::Project => {}
+            ItemType::ProjectContainer => container += 1,
+            ItemType::Cache | ItemType::DependencyStore => cache += 1,
+            ItemType::ApplicationData => appdata += 1,
+            _ => other += 1,
+        }
+    }
     Ok(WorkspaceStats {
         workspace: ws,
         project_count: cur.project_count,
+        discovered_items: discovered,
+        container_count: container,
+        cache_count: cache,
+        appdata_count: appdata,
+        other_count: other,
         active_count: cur.active_count,
         dormant_count: cur.dormant_count,
         archived_count: cur.archived_count,
@@ -358,18 +387,19 @@ pub fn insert_project(
     let junk_detail = serde_json::to_string(&p.junk_detail).unwrap_or_else(|_| "[]".to_string());
     conn.execute(
         "INSERT INTO projects
-            (path, name, stack, size_bytes, junk_bytes, node_modules_bytes,
+            (path, name, item_type, stack, size_bytes, junk_bytes, node_modules_bytes,
              build_bytes, archive_bytes, junk_detail, git_present, has_readme,
              last_activity, health_score, confidence, workspace_id, created_at, updated_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?16)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?17)
          ON CONFLICT(path) DO UPDATE SET
-            name=?2, stack=?3, size_bytes=?4, junk_bytes=?5,
-            node_modules_bytes=?6, build_bytes=?7, archive_bytes=?8, junk_detail=?9,
-            git_present=?10, has_readme=?11, last_activity=?12,
-            health_score=?13, confidence=?14, workspace_id=?15, updated_at=?16",
+            name=?2, item_type=?3, stack=?4, size_bytes=?5, junk_bytes=?6,
+            node_modules_bytes=?7, build_bytes=?8, archive_bytes=?9, junk_detail=?10,
+            git_present=?11, has_readme=?12, last_activity=?13,
+            health_score=?14, confidence=?15, workspace_id=?16, updated_at=?17",
         params![
             p.path,
             p.name,
+            p.item_type.as_str(),
             stack,
             p.size_bytes as i64,
             p.junk_bytes as i64,
@@ -393,10 +423,12 @@ fn map_project(r: &rusqlite::Row) -> rusqlite::Result<Project> {
     let stack: String = r.get(3)?;
     let junk_detail_json: String = r.get(9)?;
     let junk_detail: Vec<JunkEntry> = serde_json::from_str(&junk_detail_json).unwrap_or_default();
+    let item_type: String = r.get(17)?;
     Ok(Project {
         id: r.get(0)?,
         path: r.get(1)?,
         name: r.get(2)?,
+        item_type: crate::model::ItemType::parse(&item_type),
         stack: if stack.is_empty() {
             Vec::new()
         } else {
@@ -421,7 +453,7 @@ fn map_project(r: &rusqlite::Row) -> rusqlite::Result<Project> {
 const PROJ_SELECT: &str = "SELECT p.id, p.path, p.name, p.stack, p.size_bytes, p.junk_bytes, \
     p.node_modules_bytes, p.build_bytes, p.archive_bytes, p.junk_detail, p.git_present, \
     p.has_readme, p.last_activity, p.health_score, p.confidence, p.workspace_id, \
-    (ip.path IS NOT NULL) AS ignored \
+    (ip.path IS NOT NULL) AS ignored, p.item_type \
     FROM projects p LEFT JOIN ignored_projects ip ON ip.path = p.path";
 
 pub fn projects_for_workspace(conn: &Connection, workspace_id: i64) -> rusqlite::Result<Vec<Project>> {
@@ -441,7 +473,8 @@ pub fn all_projects(conn: &Connection) -> rusqlite::Result<Vec<Project>> {
 pub fn search_projects(conn: &Connection, query: &str) -> rusqlite::Result<Vec<Project>> {
     let like = format!("%{}%", query.trim());
     let mut stmt = conn.prepare(&format!(
-        "{PROJ_SELECT} WHERE p.name LIKE ?1 OR p.path LIKE ?1 \
+        "{PROJ_SELECT} WHERE (p.name LIKE ?1 OR p.path LIKE ?1) \
+         AND p.item_type IN ('project', 'project_container') \
          ORDER BY p.size_bytes DESC LIMIT 300"
     ))?;
     let rows = stmt.query_map(params![like], map_project)?;

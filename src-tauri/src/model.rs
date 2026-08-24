@@ -7,12 +7,77 @@ pub struct JunkEntry {
     pub bytes: u64,
 }
 
+/// What a discovered item actually is. Classification happens per item, never
+/// by the workspace's name/path — a folder in Downloads can be a real PROJECT
+/// while a folder in AppData is CACHE.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemType {
+    Project,
+    ProjectContainer,
+    Cache,
+    DependencyStore,
+    BuildArtifact,
+    ApplicationData,
+    SystemData,
+    Archive,
+    File,
+    Unknown,
+}
+
+impl Default for ItemType {
+    fn default() -> Self {
+        ItemType::Unknown
+    }
+}
+
+impl ItemType {
+    /// Counts toward the headline "projects" number (real, git-auditable code).
+    pub fn is_project(self) -> bool {
+        matches!(self, ItemType::Project)
+    }
+    /// Real user code (a project or a container of projects) — not noise.
+    pub fn is_real(self) -> bool {
+        matches!(self, ItemType::Project | ItemType::ProjectContainer)
+    }
+    pub fn as_str(self) -> &'static str {
+        match self {
+            ItemType::Project => "project",
+            ItemType::ProjectContainer => "project_container",
+            ItemType::Cache => "cache",
+            ItemType::DependencyStore => "dependency_store",
+            ItemType::BuildArtifact => "build_artifact",
+            ItemType::ApplicationData => "application_data",
+            ItemType::SystemData => "system_data",
+            ItemType::Archive => "archive",
+            ItemType::File => "file",
+            ItemType::Unknown => "unknown",
+        }
+    }
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "project" => ItemType::Project,
+            "project_container" => ItemType::ProjectContainer,
+            "cache" => ItemType::Cache,
+            "dependency_store" => ItemType::DependencyStore,
+            "build_artifact" => ItemType::BuildArtifact,
+            "application_data" => ItemType::ApplicationData,
+            "system_data" => ItemType::SystemData,
+            "archive" => ItemType::Archive,
+            "file" => ItemType::File,
+            _ => ItemType::Unknown,
+        }
+    }
+}
+
 /// A single detected software project plus its computed metadata.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Project {
     pub id: i64,
     pub path: String,
     pub name: String,
+    #[serde(default)]
+    pub item_type: ItemType,
     pub stack: Vec<String>,
     pub size_bytes: u64,
     pub junk_bytes: u64,
@@ -43,7 +108,16 @@ pub struct Workspace {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceStats {
     pub workspace: Workspace,
+    /// Real projects only (ItemType::Project).
     pub project_count: usize,
+    /// Everything the scanner surfaced (projects + containers + caches + …).
+    pub discovered_items: usize,
+    pub container_count: usize,
+    /// Cache + DependencyStore.
+    pub cache_count: usize,
+    pub appdata_count: usize,
+    /// Archive + File + BuildArtifact + SystemData + Unknown.
+    pub other_count: usize,
     pub active_count: usize,
     pub dormant_count: usize,
     pub archived_count: usize,
@@ -193,6 +267,15 @@ pub struct AuditReport {
     pub generated_at: i64,
     pub projects: Vec<ProjectAudit>,
     pub software: Vec<SoftwareItem>,
+    // ---- Discovery buckets (all scanned items) ----
+    pub discovered_items: usize,
+    pub real_projects: usize,
+    pub containers: usize,
+    pub caches: usize,
+    pub application_data: usize,
+    pub other_items: usize,
+    pub discovery_warnings: Vec<String>,
+    // ---- Git counters (real projects only) ----
     pub total_projects: usize,
     pub git_repos: usize,
     pub not_git: usize,

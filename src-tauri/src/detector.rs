@@ -13,6 +13,12 @@ const MARKER_FILES: &[&str] = &[
     "go.mod",
     "pyproject.toml",
     "requirements.txt",
+    "pom.xml",
+    "build.gradle",
+    "build.gradle.kts",
+    "Dockerfile",
+    "docker-compose.yml",
+    "compose.yml",
 ];
 
 /// Marker file extensions (e.g. *.sln, *.csproj).
@@ -138,6 +144,45 @@ pub fn has_readme(dir: &Path) -> bool {
         }
     }
     false
+}
+
+/// Weak signal: a config file that projects commonly carry (tsconfig,
+/// vite/next/astro/nuxt config, .gitignore, .env).
+pub fn has_config(dir: &Path) -> bool {
+    let named = [
+        "tsconfig.json",
+        ".gitignore",
+        ".env",
+        ".env.local",
+        "Makefile",
+        "vercel.json",
+    ];
+    if named.iter().any(|n| dir.join(n).exists()) {
+        return true;
+    }
+    if let Ok(entries) = fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let lower = name.to_string_lossy().to_lowercase();
+            // vite.config.*, next.config.*, astro.config.*, nuxt.config.*, svelte.config.*
+            if lower.ends_with(".config.js")
+                || lower.ends_with(".config.ts")
+                || lower.ends_with(".config.mjs")
+                || lower.ends_with(".config.cjs")
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Weak signal: a conventional source directory.
+pub fn has_source_dir(dir: &Path) -> bool {
+    const SRC_DIRS: &[&str] = &[
+        "src", "app", "server", "client", "frontend", "backend", "public", "lib", "tests", "test",
+    ];
+    SRC_DIRS.iter().any(|d| dir.join(d).is_dir())
 }
 
 /// Whether the directory contains any project manifest (marker file), excluding .git.

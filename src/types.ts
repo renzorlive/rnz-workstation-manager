@@ -3,10 +3,23 @@ export interface JunkEntry {
   bytes: number;
 }
 
+export type ItemType =
+  | "project"
+  | "project_container"
+  | "cache"
+  | "dependency_store"
+  | "build_artifact"
+  | "application_data"
+  | "system_data"
+  | "archive"
+  | "file"
+  | "unknown";
+
 export interface Project {
   id: number;
   path: string;
   name: string;
+  item_type: ItemType;
   stack: string[];
   size_bytes: number;
   junk_bytes: number;
@@ -35,6 +48,11 @@ export interface Workspace {
 export interface WorkspaceStats {
   workspace: Workspace;
   project_count: number;
+  discovered_items: number;
+  container_count: number;
+  cache_count: number;
+  appdata_count: number;
+  other_count: number;
   active_count: number;
   dormant_count: number;
   archived_count: number;
@@ -149,6 +167,13 @@ export interface AuditReport {
   generated_at: number;
   projects: ProjectAudit[];
   software: SoftwareItem[];
+  discovered_items: number;
+  real_projects: number;
+  containers: number;
+  caches: number;
+  application_data: number;
+  other_items: number;
+  discovery_warnings: string[];
   total_projects: number;
   git_repos: number;
   not_git: number;
