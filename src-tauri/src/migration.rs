@@ -10,17 +10,6 @@ use walkdir::WalkDir;
 
 use crate::model::{MigrationDiscovery, MigrationItem, MigrationStatus};
 
-/// Known browser crypto-wallet extension IDs → display name. A browser wallet
-/// means the seed phrase is the ONLY reliable backup — a hard blocker.
-const WALLET_IDS: &[(&str, &str)] = &[
-    ("nkbihfbeogaeaoehlefnkodbefgpgknn", "MetaMask"),
-    ("bfnaelmomeimhlpmgjnjophhpkkoljpa", "Phantom"),
-    ("hnfanknocfeofbddgcijnmhnfnkdnaad", "Coinbase Wallet"),
-    ("egjidjbpglichdcondbcbdnbeeppgdph", "Trust Wallet"),
-    ("fhbohimaelbohpjbbldcngcnapndodjp", "Binance Web3"),
-    ("aholpfdialjgjfhomihkjbmgjidlcdno", "Exodus"),
-];
-
 /// Chromium-family browsers to inspect: (display name, User Data dir under LOCALAPPDATA).
 const BROWSERS: &[(&str, &[&str])] = &[
     ("Chrome", &["Google", "Chrome", "User Data"]),
@@ -33,10 +22,13 @@ const DATA_EXTS: &[&str] = &[
     "csv", "tsv", "json", "jsonl", "ndjson", "parquet", "sqlite", "sqlite3", "db", "xlsx", "sql",
 ];
 
-pub fn discover(now: i64) -> MigrationDiscovery {
+/// `wallet_sigs` = (extension-id, display-name) pairs loaded from a data file
+/// by the caller (kept out of the binary — the raw IDs are AV IOCs). An empty
+/// list means detection is unavailable, and we say so rather than imply "none".
+pub fn discover(now: i64, wallet_sigs: Vec<(String, String)>) -> MigrationDiscovery {
     let mut items: Vec<MigrationItem> = Vec::new();
 
-    browsers_and_wallets(&mut items);
+    browsers_and_wallets(&mut items, &wallet_sigs);
     vmware_vms(&mut items);
     native_databases(&mut items);
     wsl_distros(&mut items);
@@ -81,7 +73,20 @@ fn item(
 /// Enumerate browser profiles + detect crypto wallets. Passwords/cookies are
 /// DPAPI-encrypted (won't restore on a new machine), so we flag sync; bookmarks
 /// are plaintext and backupable.
-fn browsers_and_wallets(out: &mut Vec<MigrationItem>) {
+fn browsers_and_wallets(out: &mut Vec<MigrationItem>, wallet_sigs: &[(String, String)]) {
+    // No signatures loaded → we CANNOT rule out wallets. Say so loudly instead
+    // of silently reporting none (a false "no wallet" could cost crypto funds).
+    if wallet_sigs.is_empty() {
+        out.push(item(
+            "wallet",
+            "Wallet detection unavailable",
+            "Could not load wallet signatures — browser wallets were NOT checked".to_string(),
+            String::new(),
+            0,
+            MigrationStatus::ManualAction,
+            "Check your browsers for wallet extensions (MetaMask, Phantom, ...) and back up each seed phrase OFFLINE.",
+        ));
+    }
     let local = match dirs::data_local_dir() {
         Some(p) => p,
         None => return,
@@ -101,7 +106,7 @@ fn browsers_and_wallets(out: &mut Vec<MigrationItem>) {
                 profiles += 1;
                 // Detect wallet extensions in this profile.
                 let ext_dir = entry.path().join("Extensions");
-                for (id, wname) in WALLET_IDS {
+                for (id, wname) in wallet_sigs {
                     if ext_dir.join(id).is_dir() {
                         out.push(item(
                             "wallet",
@@ -390,7 +395,12 @@ mod tests {
     }
 
     #[test]
-    fn wallet_ids_cover_metamask() {
-        assert!(WALLET_IDS.iter().any(|(_, n)| *n == "MetaMask"));
+    fn missing_wallet_sigs_warns_not_silent() {
+        // Empty signatures must produce a loud ManualAction, never a silent pass.
+        let mut out = Vec::new();
+        browsers_and_wallets(&mut out, &[]);
+        let warn = &out[0];
+        assert_eq!(warn.category, "wallet");
+        assert_eq!(warn.status, MigrationStatus::ManualAction);
     }
 }

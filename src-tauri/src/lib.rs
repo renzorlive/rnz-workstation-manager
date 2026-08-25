@@ -368,11 +368,41 @@ async fn discover_assets() -> Result<AssetInventory, String> {
 /// Read-only migration discovery: browsers/wallets, VMs, native databases and
 /// WSL distros a reinstall would lose, each with a backup-readiness status.
 #[tauri::command]
-async fn discover_migration() -> Result<MigrationDiscovery, String> {
+async fn discover_migration(app: tauri::AppHandle) -> Result<MigrationDiscovery, String> {
     let now = now_secs();
-    tauri::async_runtime::spawn_blocking(move || migration::discover(now))
+    // Wallet extension IDs live in a JSON resource, not baked into the binary
+    // (the raw IDs are AV infostealer IOCs and false-flag the exe). On failure
+    // we pass none and migration emits a "check wallets manually" warning.
+    let wallets = load_wallet_signatures(&app);
+    tauri::async_runtime::spawn_blocking(move || migration::discover(now, wallets))
         .await
         .map_err(|e| format!("migration discovery failed: {e}"))
+}
+
+/// Load (extension-id, display-name) wallet signatures from the bundled JSON
+/// resource. Returns empty on any failure — callers must treat empty as
+/// "detection unavailable", never as "no wallets".
+fn load_wallet_signatures(app: &tauri::AppHandle) -> Vec<(String, String)> {
+    use tauri::Manager;
+    #[derive(serde::Deserialize)]
+    struct Sig {
+        id: String,
+        name: String,
+    }
+    let path = match app
+        .path()
+        .resolve("wallet-signatures.json", tauri::path::BaseDirectory::Resource)
+    {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return Vec::new(),
+    };
+    serde_json::from_str::<Vec<Sig>>(&text)
+        .map(|v| v.into_iter().map(|s| (s.id, s.name)).collect())
+        .unwrap_or_default()
 }
 
 /// Write the audit report to `dir` as both `audit.json` and `audit-report.md`.
